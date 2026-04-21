@@ -6,13 +6,25 @@ Servo palang;
 LiquidCrystal lcd(7, 8, 5, 6, 10, 11);
 
 // Pin
-const int sensorPin = 4;
+const int trigPin = 2;
+const int echoPin = 3;
 const int ledHijau = A1;
 const int ledMerah = A2;
 const int servoPin = 9;
+const int batasJarakCm = 300;
 
 void bukaPalang();
 void tutupPalang();
+float bacaJarakCm();
+void setLed(bool hijauMenyala, bool merahMenyala);
+void updateLampu();
+
+enum StatusPintu {
+  TERTUTUP,
+  MEMBUKA,
+  TERBUKA,
+  MENUTUP
+};
 
 int lcdMode = -1; // 0=open, 1=closing, 2=closed
 
@@ -38,13 +50,15 @@ void tampilLCD(int mode) {
 // Tracking untuk delay 5 detik
 unsigned long waktuSensorKosong = 0;
 unsigned long waktuMenutup = 0;
-bool terbuka = false;  // status palang: false = tertutup, true = terbuka
-bool sedangMenutup = false;
+StatusPintu statusPintu = TERTUTUP;
 
 void setup() {
-  pinMode(sensorPin, INPUT_PULLUP); // gunakan pull-up internal untuk sensor IR
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
   pinMode(ledHijau, OUTPUT);
   pinMode(ledMerah, OUTPUT);
+
+  digitalWrite(trigPin, LOW);
 
   lcd.begin(16, 2);
   palang.attach(servoPin);
@@ -55,15 +69,16 @@ void setup() {
 }
 
 void loop() {
-  int sensor = digitalRead(sensorPin);
+  float jarak = bacaJarakCm();
+  bool adaObjek = jarak > 0 && jarak <= batasJarakCm;
 
-  // Sensor IR: LOW = ada objek, HIGH = tidak ada objek
-  if (sensor == LOW) {
-    if (!terbuka) {
+  // HC-SR04: objek dianggap terdeteksi jika berada dalam batas jarak.
+  if (adaObjek) {
+    if (statusPintu == TERTUTUP || statusPintu == MENUTUP) {
+      statusPintu = MEMBUKA;
       bukaPalang();
-      terbuka = true;
+      statusPintu = TERBUKA;
     }
-    sedangMenutup = false;
     waktuSensorKosong = 0;  // reset timer saat objek terdeteksi
     tampilLCD(0);
   } else {
@@ -71,17 +86,16 @@ void loop() {
       waktuSensorKosong = millis();
     }
 
-    if (sedangMenutup) {
+    if (statusPintu == MENUTUP) {
       if (millis() - waktuMenutup >= 500) {
-        sedangMenutup = false;
+        statusPintu = TERTUTUP;
         tampilLCD(2);
       }
-    } else if (terbuka) {
+    } else if (statusPintu == TERBUKA) {
       if (millis() - waktuSensorKosong >= 5000) {
+        statusPintu = MENUTUP;
         tampilLCD(1);
         tutupPalang();
-        terbuka = false;
-        sedangMenutup = true;
         waktuMenutup = millis();
         waktuSensorKosong = 0;
       } else {
@@ -92,7 +106,40 @@ void loop() {
     }
   }
 
+  updateLampu();
+
   delay(200);
+}
+
+float bacaJarakCm() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  unsigned long durasi = pulseIn(echoPin, HIGH, 30000);
+  if (durasi == 0) {
+    return -1;
+  }
+
+  return durasi * 0.0343 / 2.0;
+}
+
+void setLed(bool hijauMenyala, bool merahMenyala) {
+  // LED biasa pada diagram saat ini aktif saat pin HIGH.
+  digitalWrite(ledHijau, hijauMenyala ? HIGH : LOW);
+  digitalWrite(ledMerah, merahMenyala ? HIGH : LOW);
+}
+
+void updateLampu() {
+  if (statusPintu == MEMBUKA || statusPintu == TERBUKA) {
+    // Pintu terbuka atau sedang membuka -> lampu hijau.
+    setLed(true, false);
+  } else {
+    // Pintu tertutup, sedang menutup, atau kondisi default -> lampu merah.
+    setLed(false, true);
+  }
 }
 
 // =====================
@@ -100,9 +147,6 @@ void loop() {
 // =====================
 void bukaPalang() {
   palang.write(90); // buka
-
-  digitalWrite(ledHijau, LOW);   // nyalakan LED hijau
-  digitalWrite(ledMerah, HIGH);  // matikan LED merah
 }
 
 // =====================
@@ -110,7 +154,4 @@ void bukaPalang() {
 // =====================
 void tutupPalang() {
   palang.write(0); // tutup
-
-  digitalWrite(ledHijau, HIGH);  // matikan LED hijau
-  digitalWrite(ledMerah, LOW);   // nyalakan LED merah
 }
